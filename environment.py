@@ -1,3 +1,5 @@
+import random
+
 import utils
 
 
@@ -32,7 +34,7 @@ class Environment:
     def load_assets(self, world_map:list):
         for i in range(len(world_map)):
             for j in range(len(world_map[i])):
-                if world_map[i][j] == 'u':
+                if world_map[i][j] == 'u' or world_map[i][j] == 'd' or world_map[i][j] == 'l' or world_map[i][j] == 'r':
                     world_map[i][j] = utils.ChargingStation((i, j), world_map[i][j])
                 elif world_map[i][j] == '^' or world_map[i][j] == 'v' or world_map[i][j] == '<' or world_map[i][j] == '>':
                     world_map[i][j] = utils.Roomba((i, j), world_map[i][j])
@@ -58,41 +60,55 @@ class Environment:
     def move_to(self, position, to, environment):
         x = position[1] + to[1]
         y = position[0] + to[0]
-        if environment.world[y][x] == ' ':
+        '''if environment.world[y][x] == ' ':
             print("Valid move")
-            return True
-        elif environment.world[y][x] == 'x':
+            return True''' # No longer needed due to blanks being replaced with weights
+        if environment.world[y][x] == 'x':
             print("Invalid move (Barrier)")
             return False
         elif environment.world[y][x] == 'u':
             print("Invalid move (Charging Station)")
             return False
+        else:
+            return True
 
 
 if __name__ == "__main__":
     e = Environment("floorplan.txt")
+
+    for i in range(len(e.world)):
+        for j in range(len(e.world[i])):
+            if e.world[i][j] == " ":
+                e.world[i][j] = random.randint(0,100)
 
     ## Setting robots
     roomba = e.world[10][3]
     charging_Station = e.world[11][3]
 
     ## Stating initial "conditions"
-    print(roomba.__str__(), roomba.position)
-    print(charging_Station.__str__(), charging_Station.position)
-    print(e)
-
-    ## Initial cycle (negates the station charging the roomba immediately)
-    roomba.act(e)
+    print("Starting conditions:")
+    print(f"\nRoomba: \n\t{roomba.__str__()}, Position: {roomba.position}\n\tCurrent Tile: {roomba.currentCleaning}")
+    print(f"Charging Station: \n\t{charging_Station.__str__()}, Position: {charging_Station.position}\n")
     print(e)
 
     ## Start of MAIN cycles
-    for i in range(100):
-        if charging_Station.act(e): # Charges roomba if roomba is "in front" of the station
-            roomba.stateOfCharge += 5
-            print("Roomba charged!")
-            if roomba.stateOfCharge > 100:
-                roomba.stateOfCharge = 100
-        if roomba.act(e):
-            print("Roomba out of charge!")
-            break # Ends cycles if roomba has no charge
-        print(e)
+    for i in range(200):
+        print("=" * 70)
+        if roomba.stateOfCharge < 100:
+            if charging_Station.act(e):
+                roomba.stateOfCharge += 5
+                if roomba.stateOfCharge > 100:
+                    roomba.stateOfCharge = 100
+                print("Roomba charged!")
+                print(f"Roomba SoC: {roomba.stateOfCharge}%")
+                roomba.previousOutput = "Roomba charged!"
+
+            else:
+                if roomba.act(e):
+                    print("Roomba out of charge!")
+                    break  # Ends cycles if roomba has no charge
+        else:
+            if roomba.act(e):
+                print("Roomba out of charge!")
+                break  # Ends cycles if roomba has no charge
+        print(roomba.printRoombaMap())

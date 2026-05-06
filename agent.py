@@ -21,7 +21,7 @@ class Agent(ABC):
         return environment.get_cells(neighbours)
 
     @abstractmethod
-    def decide(self, percept: dict[tuple[int,int],...]):
+    def decide(self, percept: dict[tuple[int,int],...], environment):
         pass
 
     @abstractmethod

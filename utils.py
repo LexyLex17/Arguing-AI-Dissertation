@@ -8,5 +8,5 @@ def is_Roomba(object):
 
 def is_Charging(object):
     if isinstance(object, ChargingStation):
-        return True
+        return object.__str__()
     return False

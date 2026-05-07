@@ -92,7 +92,7 @@ if __name__ == "__main__":
     print(e)
 
     ## Start of MAIN cycles
-    for i in range(200):
+    for i in range(100):
         print("=" * 70)
         if roomba.stateOfCharge < 100:
             if charging_Station.act(e):
@@ -111,4 +111,5 @@ if __name__ == "__main__":
             if roomba.act(e):
                 print("Roomba out of charge!")
                 break  # Ends cycles if roomba has no charge
+
         print(roomba.printRoombaMap())

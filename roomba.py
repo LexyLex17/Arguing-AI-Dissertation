@@ -3,17 +3,22 @@ import utils
 import random
 import heapq
 from environment import *
+import numpy as np
+import skfuzzy as fuzz
+from skfuzzy import control as ctrl
 
 class Roomba(Agent):
 
     def __init__(self, position: tuple[int, int], facing):
         super().__init__(position)
+        self.startingPosition = position
+        self.returning = False
         self.previousOutput = "Roomba Initialised"
         self.stateOfCharge = 100
         self.chargingLocation = None
         self.facing = facing
         self.currentCleaning = [None, 0]
-        self.previousCleaning = [None, 0]
+        self.previousCleaning = [self.position, 0]
         self.world = self.createMap()
 
     def createMap(self):
@@ -54,11 +59,12 @@ class Roomba(Agent):
     def decide(self, percept: dict[tuple[int, int],...], environment):
 
         print(f"Previous cycle: {self.previousOutput}")
-        print(f"Current tile: {self.currentCleaning}")
+        print(f"Current tile: {self.currentCleaning[0]}\n\tWeight: {self.currentCleaning[1]}")
+        print(f"Previous tile: {self.previousCleaning[0]}, {self.previousCleaning[1]}")
+
         for k, v in percept.items():
             if utils.is_Charging(v):
                 self.chargingLocation = k
-
 
         # Check for battery vs distance to charging station
         chargingFacing = utils.is_Charging(environment.world[self.chargingLocation[0]][self.chargingLocation[1]])
@@ -73,8 +79,13 @@ class Roomba(Agent):
             chargingLocationAim = (self.chargingLocation[0], self.chargingLocation[1]+1)
         # print(chargingLocationAim)
 
+        if self.position == chargingLocationAim:
+            self.currentCleaning = [None, 0]
+            self.previousCleaning = [None, 0]   # Erases the current cleaning once the roomba has reached the original location (Pathfound back to the station)
+            self.returning = False
+
         path = self.calc_path(self.position, chargingLocationAim, "x", environment)
-        print(f"Path = {path}")
+        # print(f"Path = {path}")
         # path + no. of turns
         totalPathMoves = 0
         if len(path) > 1:
@@ -90,15 +101,17 @@ class Roomba(Agent):
                 totalPathMoves += 1
 
 
-        print(totalPathMoves, self.stateOfCharge)
+        print(f"Path length: {totalPathMoves}")
 
-        if self.stateOfCharge <= totalPathMoves:
-            self.currentCleaning = [None, 0]
+        if self.stateOfCharge <= (totalPathMoves + 5):
+            self.previousCleaning = self.currentCleaning
+            self.returning = True
+            print(self.previousCleaning[1])
+
             if len(path) > 0:
                 directionY = path[1][0] - self.position[0]
                 directionX = path[1][1] - self.position[1]
                 direction = (directionY, directionX)
-                print(direction)
 
                 if self.facing != "^" and direction == (-1, 0):
                     return "turn up"
@@ -109,9 +122,14 @@ class Roomba(Agent):
                 elif self.facing != "<" and direction == (0, -1):
                     return "turn left"
                 else:
+                    self.currentCleaning = [(self.position[0] + direction[0], self.position[1] + direction[1]),
+                                            environment.world[self.position[0] + direction[0]][
+                                                self.position[1] + direction[1]]]
+                    print(self.currentCleaning)
                     return "move"
         else:
             # Check if there is a previously saved tile to clean
+            self.returning = False
             if self.currentCleaning[0] is None:
                 # Check for dirtiness of each tile + comparison
                 listCompare = []
@@ -211,22 +229,21 @@ class Roomba(Agent):
             #print(newPos)
             newPosBool = newPos[0]
             newPosVal = newPos[1]
-            envWor[ newPosVal[0] ][ newPosVal[1] ] = self.previousCleaning[1]
+            #print(self.previousCleaning[1])
             if newPosBool:
                 #print(f"Current: ({curPos}, {envWor[ curPos[0] ][ curPos[1] ]}) -> ({newPosVal}, {envWor[ newPosVal[0] ][ newPosVal[1] ]})")
 
                 (envWor[ curPos[0] ][ curPos[1] ], envWor[ newPosVal[0] ][ newPosVal[1] ]) \
                                                 =\
                 (envWor[ newPosVal[0] ][ newPosVal[1] ], envWor[ curPos[0] ][ curPos[1] ])
+                envWor[ curPos[0] ][ curPos[1] ] = self.previousCleaning[1]
+                # print(envWor[ curPos[0] ][ curPos[1] ])
                 self.stateOfCharge -= 1
                 print(f"SOC: {self.stateOfCharge}%\n")
         elif decision == "clean":
             self.previousOutput = "Roomba cleaned tile"
-            self.currentCleaning[1] -= 10
-            if self.currentCleaning[1] < 0:
-                self.currentCleaning[1] = 0
+            self.clean(self.currentCleaning[1], self.stateOfCharge)
             print(f"Current tile weight: {self.currentCleaning[1]}")
-            self.stateOfCharge -= 1
             print(f"SOC: {self.stateOfCharge}%\n")
         elif decision == "restart":
             print("restarted cycle")
@@ -244,6 +261,93 @@ class Roomba(Agent):
             return output
         else:
             return [False, None]
+
+    def clean(self, tileWeight, batterySOC):
+
+        print(tileWeight, batterySOC)
+
+        batteryLevel = ctrl.Antecedent(np.arange(0, 100, 10), 'batteryLevel')
+        dirtiness = ctrl.Antecedent(np.arange(0, 100, 10), 'dirtiness')
+        fanSpeedC = ctrl.Consequent(np.arange(0, 100, 10), 'fanSpeedCon')
+        fanSpeedA = ctrl.Antecedent(np.arange(0, 100, 10), 'fanSpeedAnt')
+        batteryDrainage = ctrl.Consequent(np.arange(0, 10, 1), 'batteryDrainage')
+        cleaningRate = ctrl.Consequent(np.arange(1, 20, 1), 'cleaningRate')
+
+        # Battery level
+        batteryLevel['low'] = fuzz.zmf(batteryLevel.universe, 10, 33)
+        batteryLevel['medium'] = fuzz.trapmf(batteryLevel.universe, [30, 40, 50, 75])
+        batteryLevel['high'] = (fuzz.smf(batteryLevel.universe, 65, 90))
+
+        # Dirtiness
+        dirtiness['low'] = fuzz.zmf(dirtiness.universe, 10, 33)
+        dirtiness['medium'] = fuzz.trapmf(dirtiness.universe, [15, 40, 55, 70])
+        dirtiness['high'] = (fuzz.smf(dirtiness.universe, 65, 80))
+
+        # Fan speed A
+        fanSpeedA['low'] = fuzz.zmf(fanSpeedA.universe, 10, 33)
+        fanSpeedA['medium'] = fuzz.trapmf(fanSpeedA.universe, [15, 40, 55, 70])
+        fanSpeedA['high'] = (fuzz.smf(fanSpeedA.universe, 60, 75))
+        # Fan speed C
+        fanSpeedC['low'] = fuzz.zmf(fanSpeedC.universe, 10, 33)
+        fanSpeedC['medium'] = fuzz.trapmf(fanSpeedC.universe, [15, 40, 55, 70])
+        fanSpeedC['high'] = (fuzz.smf(fanSpeedC.universe, 60, 75))
+
+        # Battery Drainage
+        batteryDrainage['low'] = fuzz.zmf(batteryDrainage.universe, 0, 3)
+        batteryDrainage['medium'] = fuzz.trapmf(batteryDrainage.universe, [3, 4, 6, 7])
+        batteryDrainage['high'] = fuzz.smf(batteryDrainage.universe, 7, 8)
+
+        # Cleaning Rate
+        cleaningRate['low'] = fuzz.zmf(cleaningRate.universe, 0, 6)
+        cleaningRate['medium'] = fuzz.trapmf(cleaningRate.universe, [5, 9, 13, 15])
+        cleaningRate['high'] = fuzz.smf(cleaningRate.universe, 15, 16)
+
+        # Conditions
+        sim1Condition1 = ctrl.Rule(dirtiness['low'] | batteryLevel['low'], fanSpeedC['low'])
+        sim1Condition2 = ctrl.Rule(dirtiness['medium'], fanSpeedC['medium'])
+        sim1Condition3 = ctrl.Rule(dirtiness['high'] & batteryLevel['high'], fanSpeedC['high'])
+
+        sim2Condition1 = ctrl.Rule(fanSpeedA['low'], batteryDrainage['low'])
+        sim2Condition2 = ctrl.Rule(fanSpeedA['medium'], batteryDrainage['medium'])
+        sim2Condition3 = ctrl.Rule(fanSpeedA['high'], batteryDrainage['high'])
+
+        sim3Condition1 = ctrl.Rule(fanSpeedA['low'], cleaningRate['low'])
+        sim3Condition2 = ctrl.Rule(fanSpeedA['medium'], cleaningRate['medium'])
+        sim3Condition3 = ctrl.Rule(fanSpeedA['high'], cleaningRate['high'])
+
+        # Simulations
+        fanInput = self.runSim1(tileWeight, batterySOC, [sim1Condition1, sim1Condition2, sim1Condition3])
+        batteryDrainageOut = int(np.round(self.runSim2(fanInput, [sim2Condition1, sim2Condition2, sim2Condition3])))
+        cleaningRateOut = int(np.round(self.runSim3(fanInput, [sim3Condition1, sim3Condition2, sim3Condition3])))
+
+        print(f"Battery Drainage: {batteryDrainageOut}")
+        print(f"Cleaning Rate: {cleaningRateOut}")
+        self.stateOfCharge -= batteryDrainageOut
+        self.currentCleaning[1] -= cleaningRateOut
+        if self.currentCleaning[1] < 0:
+            self.currentCleaning[1] = 0
+
+    def runSim1(self, input1, input2, conditions):
+        fanSpeedSim_ctrl = ctrl.ControlSystem(conditions)
+        fanSpeedSim_sim = ctrl.ControlSystemSimulation(fanSpeedSim_ctrl)
+        fanSpeedSim_sim.input['dirtiness'] = input1
+        fanSpeedSim_sim.input['batteryLevel'] = input2
+        fanSpeedSim_sim.compute()
+        return fanSpeedSim_sim.output['fanSpeedCon']
+
+    def runSim2(self, input, conditions):
+        batteryDrainSim_ctrl = ctrl.ControlSystem(conditions)
+        batteryDrainSim_sim = ctrl.ControlSystemSimulation(batteryDrainSim_ctrl)
+        batteryDrainSim_sim.input['fanSpeedAnt'] = input
+        batteryDrainSim_sim.compute()
+        return batteryDrainSim_sim.output['batteryDrainage']
+
+    def runSim3(self, input, conditions):
+        cleaningSim_ctrl = ctrl.ControlSystem(conditions)
+        cleaningSim_sim = ctrl.ControlSystemSimulation(cleaningSim_ctrl)
+        cleaningSim_sim.input['fanSpeedAnt'] = input
+        cleaningSim_sim.compute()
+        return cleaningSim_sim.output['cleaningRate']
 
     def __str__(self):
         return self.facing
